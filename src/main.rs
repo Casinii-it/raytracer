@@ -1,13 +1,9 @@
-use std::{default, f32::INFINITY, vec};
-
+use std::{f32::INFINITY};
 use glam::{Vec2, Vec3};
-use minifb::{Key, Window, WindowOptions};
-
-
+use minifb::{Key::self, Window, WindowOptions};
 
 const WIDTH: usize = 1600;
 const HEIGHT: usize = 900;
-
 
 #[derive(Default)]
 struct World {
@@ -45,7 +41,8 @@ struct Ray {
     position: Vec3,
     orientation: Vec3,
     colour: [u8;4],
-    last_collision: Vec3
+    last_collision: Vec3,
+    normal: Vec3
 }
 
 
@@ -54,6 +51,7 @@ struct Sphere {
     position: Vec3,
     radius: f32,
     colour: [u8;4],
+    velocity: Vec3
 }
 
 struct Triangle {
@@ -92,15 +90,14 @@ fn find_focal_length(camera: &Camera) -> f32{
 
 enum VecAxis {X, Y, Z}
 
-fn scale_vector_to_value(vec: &Vec3, axis: VecAxis, value: f32) -> Vec3 {
-    let normalized = vec.normalize();
+fn scale_vector_to_value(pos_vec: &Vec3, dir_vec: &Vec3, axis: VecAxis, value: f32) -> Vec3 {
     let mult = match axis {
-        VecAxis::X => value/normalized.x,
-        VecAxis::Y => value/normalized.y,
-        VecAxis::Z => value/normalized.z,
+        VecAxis::X => (value-pos_vec.x)/dir_vec.x,
+        VecAxis::Y => (value-pos_vec.y)/dir_vec.y,
+        VecAxis::Z => (value-pos_vec.z)/dir_vec.z,
     };
 
-    let result = vec * mult;
+    let result = pos_vec + dir_vec * mult;
     
     return result
 }
@@ -139,9 +136,15 @@ fn sphere_collision(ray: &Ray, sphere: &Sphere) -> Option<Vec3> {
     }
 }
 
+fn physics_step(objects: &mut [Sphere], camera: &mut Camera, frame: f32) {
+    for object in objects {
+        object.position.x += (frame/30.).sin()/20.;
+        object.position += (frame/120.).sin()/100.;
+    }
+    //camera.position += camera.velocity/180.;
+}
 
-
-fn render(camera: &Camera, buffer: &mut Vec<u32>) {
+fn render(camera: &Camera, buffer: &mut Vec<u32>, objects: &[Sphere], world: &World) {
     let focal_length = find_focal_length(&camera);
     let _normalized_orientation = camera.orientation.normalize_or(Vec3::new(1.,0.,0.));
 
@@ -161,10 +164,11 @@ fn render(camera: &Camera, buffer: &mut Vec<u32>) {
             position: camera.position,
             orientation: ray_vector,
             colour: [0,0,150,255],
-            last_collision: Vec3::new(INFINITY, INFINITY, INFINITY)
+            last_collision: Vec3::new(INFINITY, INFINITY, INFINITY),
+            ..Default::default()
         };
         
-        raycast_new(&mut ray, &[Sphere{colour: [0,50,250,100], position: Vec3::new(6., 3., 1.5), radius: 3.}], World{floor: Floor{height: 0., colour: [0,0,0,0]}, sky: Sky{colour: [0,0,50,255], tint_per_unit: 0.}});
+        raycast_new(&mut ray, &objects, &world, 1);
 
         *pixel = vec2int(ray.colour);
     }
@@ -191,21 +195,63 @@ fn raycast(ray: &mut Ray) {
     }
 }
 
-fn raycast_new(ray: &mut Ray, spheres: &[Sphere], world: World) {
+fn raycast_new(ray: &mut Ray, spheres: &[Sphere], world: &World, depth: u32) {
+    let mut not_world = false;
     for sphere in spheres {
         if let Some(collision_point) = sphere_collision(ray, &sphere) {
+            not_world = true;
             if ray.position.distance_squared(collision_point) < ray.position.distance_squared(ray.last_collision) {
                 ray.last_collision = collision_point;
-                ray.colour = sphere.colour;
+                ray.position = ray.last_collision;
+                
+                let normal = (ray.position - sphere.position).normalize();
+                ray.orientation = normal;
+                if depth <= 0 {
+                    ray.colour = sphere.colour;
+                    //let mult = ((normal.dot(Vec3::new(-1.,100.,1.).normalize())/2. +0.5) * 255.) as u8;
+                    //ray.colour = [0, mult, mult, mult];
+                }
+                else {
+                    let new_dir = ray.orientation.reflect(normal);
+                    ray.position = ray.last_collision + 0.0 * normal;
+                    ray.orientation = new_dir;
+                    raycast_new(&mut *ray, &spheres, &world, depth-1);
+                }
+
+                //ray.colour = sphere.colour;
                 return
             }
         }
     }
-    if ray.orientation.z < 0. {
-        ray.colour = world.floor.colour
+
+
+    let mut is_sky = false;
+
+    if !not_world {
+        if ray.orientation.z < 0. {
+            ray.colour = world.floor.colour;
+            ray.position = scale_vector_to_value(&ray.position, &ray.orientation, VecAxis::Z, world.floor.height);
+            ray.normal = Vec3::new(0.,0.,1.);
+        }
+        else if ray.orientation.z >= 0. {
+            is_sky = true;
+            ray.colour = world.sky.colour;
+            ray.colour = [0, ((ray.orientation.x * 500.)%255.) as u8, ((ray.orientation.y * 500.)%255.) as u8, ((ray.orientation.z * 500.)%255.) as u8];
+
+        }
     }
-    else if ray.orientation.z >= 0. {
-        ray.colour = world.sky.colour
+
+    if !is_sky {
+        let light_pos = Vec3::new(1.,0.,1.);
+
+        let light_scale = ray.normal.normalize().dot((light_pos - ray.position).normalize()) / ray.position.distance_squared(light_pos);
+        
+        //println!("{light_scale}");
+        for hex in ray.colour[1..4].iter_mut() {
+            *hex = (*hex as f32 * light_scale * 1000.) as u8;
+            *hex = (200./ray.position.distance_squared(light_pos)) as u8;
+            //println!("{} {}",ray.position.distance_squared(light_pos), ray.position); ///// IT's THE RAY POSITION, THIS RETURNS 1.01 [-0, -0, 0] (println!("{} {}",ray.position.distance_squared(light_pos), ray.position);)
+        }
     }
 }
 
@@ -222,13 +268,13 @@ fn main() {
         panic!("{}", e);
     });
 
-    window.set_target_fps(60);
+    //window.set_target_fps(60);
 
 
 
-    let camera = Camera{
+    let mut camera = Camera{
         position: Vec3::new(0.,0.,1.),
-        velocity: Vec3::ZERO,
+        velocity: Vec3::new(-1.,0.,0.),
         orientation: Vec3::new(1.,0.,0.),
 
         fov: 150.,
@@ -237,22 +283,34 @@ fn main() {
 
 
 
-    let _objects = [
+    let mut objects = [
         Sphere {
-        position: Vec3::new(6., 3., 1.5),
-        radius: 3.,
+        position: Vec3::new(3., 0., 0.5),
+        radius: 1.,
         colour: [0,0,150,255],
+        velocity: Vec3::new(0.,0.,0.),
         ..Default::default()
         }
     ];
 
+    let world = World{
+        floor: Floor{
+            height: 0.,
+            colour: [0,50,255,50]
+        },
+        sky: Sky{
+            colour: [0,0,50,255],
+            tint_per_unit: 0.
+        }
+    };
 
 
-
-    
+    let mut counter = 0.;
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        counter += 0.2;
+        physics_step(&mut objects, &mut camera, counter);
         println!("{}", window.get_fps());
-        render(&camera, &mut buffer);
+        render(&camera, &mut buffer, &objects, &world);
         window
             .update_with_buffer(&buffer, WIDTH, HEIGHT)
             .unwrap();
