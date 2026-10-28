@@ -2,8 +2,8 @@ use std::{f32::INFINITY};
 use glam::{Vec2, Vec3};
 use minifb::{Key::self, Window, WindowOptions};
 
-const WIDTH: usize = 1600;
-const HEIGHT: usize = 900;
+const WIDTH: usize = 1300;
+const HEIGHT: usize = 800;
 
 #[derive(Default)]
 struct World {
