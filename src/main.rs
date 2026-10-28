@@ -73,6 +73,13 @@ struct Mesh<'a> {
 }
 
 
+fn average_colour(c1: [u8;4], c2: [u8;4]) -> [u8;4] {
+    let mut average = [8;4];
+    for i in 1..4 {
+        average[i] = (c1[i] + c2[i])/2; 
+    }
+    return average
+}
 fn vec2int(slice: [u8;4]) -> u32 {
     return u32::from_be_bytes(slice);
 }
@@ -138,10 +145,13 @@ fn sphere_collision(ray: &Ray, sphere: &Sphere) -> Option<Vec3> {
 
 fn physics_step(objects: &mut [Sphere], camera: &mut Camera, frame: f32) {
     for object in objects {
+        if object.radius != 1. {
+            return
+        }
         object.position.x += (frame/30.).sin()/20.;
         object.position += (frame/120.).sin()/100.;
     }
-    //camera.position += camera.velocity/180.;
+    //camera.position += camera.velocity/60.;
 }
 
 fn render(camera: &Camera, buffer: &mut Vec<u32>, objects: &[Sphere], world: &World) {
@@ -168,7 +178,7 @@ fn render(camera: &Camera, buffer: &mut Vec<u32>, objects: &[Sphere], world: &Wo
             ..Default::default()
         };
         
-        raycast_new(&mut ray, &objects, &world, 1);
+        raycast_new(&mut ray, &objects, &world, 2);
 
         *pixel = vec2int(ray.colour);
     }
@@ -203,35 +213,38 @@ fn raycast_new(ray: &mut Ray, spheres: &[Sphere], world: &World, depth: u32) {
             if ray.position.distance_squared(collision_point) < ray.position.distance_squared(ray.last_collision) {
                 ray.last_collision = collision_point;
                 ray.position = ray.last_collision;
-                
-                let normal = (ray.position - sphere.position).normalize();
-                ray.orientation = normal;
-                if depth <= 0 {
-                    ray.colour = sphere.colour;
-                    //let mult = ((normal.dot(Vec3::new(-1.,100.,1.).normalize())/2. +0.5) * 255.) as u8;
-                    //ray.colour = [0, mult, mult, mult];
-                }
-                else {
-                    let new_dir = ray.orientation.reflect(normal);
-                    ray.position = ray.last_collision + 0.0 * normal;
-                    ray.orientation = new_dir;
-                    raycast_new(&mut *ray, &spheres, &world, depth-1);
-                }
-
-                //ray.colour = sphere.colour;
-                return
+                ray.normal = (ray.position - sphere.position).normalize(); 
+                ray.colour = sphere.colour;
             }
         }
     }
 
+    if not_world {
+        if depth <= 0 {
+            //let mult = ((normal.dot(Vec3::new(-1.,100.,1.).normalize())/2. +0.5) * 255.) as u8;
+            //ray.colour = [0, mult, mult, mult];\
+            return
+        }   
+        let new_dir = ray.orientation.reflect(ray.normal);
+        ray.position = ray.last_collision + 0.1 * ray.normal;
+        ray.orientation = new_dir;
+        //println!("{}", depth);
+        raycast_new(&mut *ray, &spheres, &world, depth-1);
+        return
+    }
+
 
     let mut is_sky = false;
+    
+    let light_pos = Vec3::new(1.,0.,10.);
+
 
     if !not_world {
         if ray.orientation.z < 0. {
             ray.colour = world.floor.colour;
             ray.position = scale_vector_to_value(&ray.position, &ray.orientation, VecAxis::Z, world.floor.height);
             ray.normal = Vec3::new(0.,0.,1.);
+            ray.orientation = (light_pos - ray.position).normalize()
         }
         else if ray.orientation.z >= 0. {
             is_sky = true;
@@ -242,14 +255,21 @@ fn raycast_new(ray: &mut Ray, spheres: &[Sphere], world: &World, depth: u32) {
     }
 
     if !is_sky {
-        let light_pos = Vec3::new(1.,0.,1.);
 
-        let light_scale = ray.normal.normalize().dot((light_pos - ray.position).normalize()) / ray.position.distance_squared(light_pos);
+        let mut light_scale = ray.normal.normalize().dot((light_pos - ray.position).normalize()) / ray.position.distance_squared(light_pos);
         
+        for sphere in spheres {
+            if sphere_collision(ray, sphere).is_some() {
+                light_scale = 0.;
+            }
+        }
+
+        return
+
         //println!("{light_scale}");
         for hex in ray.colour[1..4].iter_mut() {
-            *hex = (*hex as f32 * light_scale * 1000.) as u8;
-            *hex = (200./ray.position.distance_squared(light_pos)) as u8;
+            *hex = (*hex as f32 * light_scale * 100.) as u8;
+            //*hex = (200./ray.position.distance_squared(light_pos)) as u8;
             //println!("{} {}",ray.position.distance_squared(light_pos), ray.position); ///// IT's THE RAY POSITION, THIS RETURNS 1.01 [-0, -0, 0] (println!("{} {}",ray.position.distance_squared(light_pos), ray.position);)
         }
     }
@@ -277,7 +297,7 @@ fn main() {
         velocity: Vec3::new(-1.,0.,0.),
         orientation: Vec3::new(1.,0.,0.),
 
-        fov: 150.,
+        fov: 120.,
         resolution: Vec2::new(WIDTH as f32,HEIGHT as f32)
     };
 
@@ -285,8 +305,15 @@ fn main() {
 
     let mut objects = [
         Sphere {
-        position: Vec3::new(3., 0., 0.5),
+        position: Vec3::new(3., -2., 1.),
         radius: 1.,
+        colour: [0,0,150,255],
+        velocity: Vec3::new(0.,0.,0.),
+        ..Default::default()
+        },
+        Sphere {
+        position: Vec3::new(4., 4., 2.),
+        radius: 2.,
         colour: [0,0,150,255],
         velocity: Vec3::new(0.,0.,0.),
         ..Default::default()
@@ -296,7 +323,7 @@ fn main() {
     let world = World{
         floor: Floor{
             height: 0.,
-            colour: [0,50,255,50]
+            colour: [0,150,150,150]
         },
         sky: Sky{
             colour: [0,0,50,255],
