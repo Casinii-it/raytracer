@@ -252,6 +252,7 @@ fn raycast(ray: &mut Ray, spheres: &[Sphere], lights: &[Light], world: &World, d
                 raycast(&mut *ray, &spheres, &lights, &world, depth-1);
                 
                 if base_reflectivity != 1. {
+                    
                     ray.colour = mix_colours(base_colour, ray.colour, base_reflectivity);
                 }
             }
@@ -308,7 +309,7 @@ fn main() {
         position: Vec3::new(3., -2., 1.),
         radius: 1.,
         colour: [0,0,150,255],
-        reflectiveness: 0.05,
+        reflectiveness: 0.,
         velocity: Vec3::new(0.,0.,0.),
         ..Default::default()
         },
@@ -316,7 +317,7 @@ fn main() {
         position: Vec3::new(4., 4., 2.),
         radius: 2.,
         colour: [0,255,0,0],
-        reflectiveness: 0.9,
+        reflectiveness: 1.,
         velocity: Vec3::new(0.,0.,0.),
         ..Default::default()
         }
@@ -347,7 +348,7 @@ fn main() {
         counter += 0.2;
         physics_step(&mut objects, &mut camera, counter);
         println!("{}", window.get_fps());
-        render(&camera, &mut buffer, &objects, &lights, &world, 3);
+        render(&camera, &mut buffer, &objects, &lights, &world, 1);
         window
             .update_with_buffer(&buffer, WIDTH, HEIGHT)
             .unwrap();
